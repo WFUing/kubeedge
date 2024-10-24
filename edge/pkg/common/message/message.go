@@ -18,6 +18,7 @@ const (
 	OperationKeepalive         = "keepalive"
 	OperationStart             = "start"
 	OperationStop              = "stop"
+	OperationProbe             = "probe"
 
 	ResourceGroupName = "resource"
 	TwinGroupName     = "twin"

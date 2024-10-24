@@ -33,6 +33,7 @@ const (
 	OpConnect    = "connected"
 	OpDisConnect = "disconnected"
 	OpKeepalive  = "keepalive"
+	OpProbe      = "probe"
 )
 
 // GpResource constants for message group

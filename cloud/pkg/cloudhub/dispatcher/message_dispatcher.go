@@ -18,13 +18,17 @@ package dispatcher
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"strings"
-	"sync"
-
+	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub"
+	util1 "github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/util"
+	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/kubeedge/api/apis/reliablesyncs/v1alpha1"
 	reliableclient "github.com/kubeedge/api/client/clientset/versioned"
@@ -42,7 +46,6 @@ import (
 	commonconst "github.com/kubeedge/kubeedge/common/constants"
 	v2 "github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
-	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
 
 // There are two `AcknowledgeMode` for message that send to edge node
@@ -159,14 +162,103 @@ func (md *messageDispatcher) DispatchDownstream() {
 	}
 }
 
+func updateLatency(nodeID string, newLatencyMs float64) {
+	// 从 cloudhub.ProbeCache 中加载值
+	value, ok := cloudhub.ProbeCache.Load(nodeID)
+	if ok {
+		// 确保 value 是 *util.Probe 类型
+		if probe, ok := value.(*util1.Probe); ok {
+			// 更新 NetWorkBenchmark 的 LatencyMs 值
+			probe.NetWork.LatencyMs = newLatencyMs
+			fmt.Printf("Updated LatencyMs for node %s to %.2f\n", nodeID, newLatencyMs)
+
+			// 重新存储更新后的 Probe 结构体
+			cloudhub.ProbeCache.Store(nodeID, probe)
+		} else {
+			fmt.Println("Value in ProbeCache is not of type *util.Probe")
+		}
+	} else {
+		// 如果没有找到该 nodeID 对应的 Probe，则创建一个新的 Probe 结构体
+		newProbe := &util1.Probe{
+			CPU:    util1.CPUBenchmark{},
+			Memory: util1.MemoryBenchmark{},
+			Disk:   util1.DiskIOBenchmark{},
+			NetWork: util1.NetWorkBenchmark{
+				LatencyMs: newLatencyMs, // 设置新的 LatencyMs 值
+			},
+		}
+
+		// 将新的 Probe 存入 ProbeCache
+		cloudhub.ProbeCache.Store(nodeID, newProbe)
+		fmt.Printf("Created new Probe and set LatencyMs for node %s to %.2f\n", nodeID, newLatencyMs)
+	}
+}
+
+func UpdateProbeCache(nodeID string, probe util1.Probe) {
+	// 从 cloudhub.ProbeCache 中加载值
+	value, ok := cloudhub.ProbeCache.Load(nodeID)
+	if ok {
+		// 确保 value 是 *util.Probe 类型
+		if probe, ok := value.(*util1.Probe); ok {
+			// 更新
+			cloudhub.ProbeCache.Store(nodeID, probe)
+		} else {
+			fmt.Println("Value in ProbeCache is not of type *util.Probe")
+		}
+	} else {
+		// 将新的 Probe 存入 ProbeCache
+		cloudhub.ProbeCache.Store(nodeID, probe)
+		fmt.Printf("Created new Probe and set LatencyMs for node %s", nodeID)
+	}
+}
+
+// ParseAndStoreJSON 解析 JSON 字符串并存储到 ProbeCache 中
+func ParseAndStoreJSON(nodeID string, jsonString string) error {
+	var probe util1.Probe
+	err := json.Unmarshal([]byte(jsonString), &probe)
+	if err != nil {
+		return err
+	}
+
+	// 更新或创建 ProbeCache
+	UpdateProbeCache(nodeID, probe)
+	return nil
+}
+
 func (md *messageDispatcher) DispatchUpstream(message *beehivemodel.Message, info *model.HubInfo) {
 	switch {
 	case message.GetOperation() == model.OpKeepalive:
 		klog.V(4).Infof("Keepalive message received from node: %s", info.NodeID)
 
+		// 获取当前时间戳
+		currentTimestamp := float64(time.Now().UnixNano()) / 1e6
+		// 从消息的 header 中获取时间戳
+		messageTimestamp := float64(message.GetTimestamp())
+		// 计算传输时延
+		delay := currentTimestamp - messageTimestamp
+		// 打印传输时延日志
+		klog.Infof("Node %s: Keepalive message received, transmission delay: %d ms", info.NodeID, delay)
+		// 更新记录
+		updateLatency(info.NodeID, delay)
+
 		err := md.SessionManager.KeepAliveMessage(info.NodeID)
 		if err != nil {
 			klog.Errorf("node %s receive keep alive message err: %v", info.NodeID, err)
+		}
+
+	case message.GetOperation() == model.OpProbe:
+		klog.V(4).Infof("Probe message received from node: %s", info.NodeID)
+		content, ok := message.GetContent().(string)
+		if !ok {
+			// 如果断言失败，说明 GetContent() 不是一个字符串类型
+			fmt.Println("Error: content is not a string")
+			return
+		}
+
+		// 解析
+		err := ParseAndStoreJSON(info.NodeID, content)
+		if err != nil {
+			fmt.Printf("解析 JSON 失败: %v\n", err)
 		}
 
 	case common.IsVolumeResource(message.GetResource()):

@@ -19,6 +19,8 @@ package edgehub
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"reflect"
 	"testing"
 	"time"
@@ -286,5 +288,71 @@ func TestKeepalive(t *testing.T) {
 				t.Errorf("TestKeepalive() StopChan = %v, want %v", got, struct{}{})
 			}
 		})
+	}
+}
+
+// 模拟 exec.Command 的函数
+var mockExecCommand func(command string, args ...string) *exec.Cmd
+
+// 用于替换 exec.Command 的假命令执行器
+func fakeExecCommand(command string, args ...string) *exec.Cmd {
+	cs := []string{"-test.run=TestHelperProcess", "--", command}
+	cmd := exec.Command(cs[0], cs[1:]...)
+	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+	return cmd
+}
+
+// 辅助测试进程，用于模拟实际的外部命令执行
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+	// 模拟 benchmark.sh 输出
+	output := `{
+		"cpu_benchmark": 2198.53,
+		"memory_benchmark": 8953271.26,
+		"disk_io_benchmark": 13755120.0
+	}`
+	// 输出假定的 JSON 结果
+	os.Stdout.Write([]byte(output))
+	os.Exit(0)
+}
+
+// probe 方法的单元测试
+func TestProbe(t *testing.T) {
+	// 保存原始 exec.Command 并在测试结束时恢复
+	originalExecCommand := exec.Command
+	defer func() { mockExecCommand = originalExecCommand }()
+
+	// 替换为假命令执行器
+	mockExecCommand = fakeExecCommand
+
+	// 创建 EdgeHub 实例，并模拟 chClient
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+	mockAdapter := edgehub.NewMockAdapter(mockCtrl)
+
+	eh := &EdgeHub{
+		chClient:      mockAdapter, // 模拟 chClient
+		reconnectChan: make(chan struct{}),
+	}
+
+	// 模拟 send 方法的行为，不做任何操作即可
+	mockAdapter.EXPECT().Send(gomock.Any()).Return(nil).AnyTimes()
+
+	// 使用超时上下文来确保测试不进入死循环
+	done := make(chan bool)
+	go func() {
+		// 执行探针方法
+		eh.probe()
+		done <- true
+	}()
+
+	select {
+	case <-done:
+		// 测试成功完成
+	case <-time.After(100 * time.Second):
+		// 测试超时
+		t.Fatal("TestProbe timed out")
 	}
 }

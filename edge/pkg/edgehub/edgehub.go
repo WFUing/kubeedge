@@ -85,6 +85,9 @@ func (eh *EdgeHub) Start() {
 
 	go eh.ifRotationDone()
 
+	// 性能测试探针
+	// eh.probe()
+
 	for {
 		select {
 		case <-beehiveContext.Done():

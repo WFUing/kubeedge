@@ -92,6 +92,10 @@ func initUpgrade(taskReq types.NodeTaskRequest) (event fsm.Event) {
 	if err != nil {
 		return
 	}
+
+	// 拿到nodeBenchmark的值
+	// var msg = nodeBenchmark()
+	// event.Msg = msg
 	return event
 }
 

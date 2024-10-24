@@ -3,11 +3,11 @@ package cloudhub
 import (
 	"errors"
 	"fmt"
-	"os"
-
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+	"os"
+	"sync"
 
 	"github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 	"github.com/kubeedge/beehive/pkg/core"
@@ -20,6 +20,7 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/servers/httpserver"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/servers/udsserver"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/session"
+	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/util"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
@@ -27,10 +28,12 @@ import (
 
 var DoneTLSTunnelCerts = make(chan bool, 1)
 var sessionMgr *session.Manager
+var ProbeCache sync.Map
 
 type cloudHub struct {
 	enable               bool
 	informersSyncedFuncs []cache.InformerSynced
+	speedupCache         *util.SpeedupCache
 
 	messageHandler handler.Handler
 	dispatcher     dispatcher.MessageDispatcher
@@ -62,10 +65,14 @@ func newCloudHub(enable bool) *cloudHub {
 		messageDispatcher, authorizer)
 	sessionMgr = sessionManager
 
+	// 加速比缓存
+	//speedupCache := util.NewSpeedupCache()
+
 	ch := &cloudHub{
 		enable:         enable,
 		dispatcher:     messageDispatcher,
 		messageHandler: messageHandler,
+		//speedupCache:   speedupCache,
 	}
 
 	ch.informersSyncedFuncs = append(ch.informersSyncedFuncs, clusterObjectSyncInformer.Informer().HasSynced)

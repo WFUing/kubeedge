@@ -3,6 +3,7 @@ package edgehub
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -194,6 +195,38 @@ func (eh *EdgeHub) keepalive() {
 
 		time.Sleep(time.Duration(config.Config.Heartbeat) * time.Second)
 	}
+}
+
+func (eh *EdgeHub) probe() {
+	ip := "192.168.122.80" // cloud node 的 IP 地址
+	port := "5000"
+	// 定义探针测试执行逻辑，探针脚本路径
+	probeScript := "./common/probe/probe.sh" // 这个是探针容器的执行脚本
+
+	// 运行探针容器
+	cmd := exec.Command(probeScript, ip, port)
+	output, err := cmd.Output()
+	if err != nil {
+		klog.Errorf("failed to execute probe script: %v", err)
+		return
+	}
+
+	// 记录探针结果
+	klog.Infof("Probe result: %s", string(output))
+
+	// 构建消息，将基准测试结果封装并发送到云端
+	msg := model.NewMessage("").
+		BuildRouter(modules.EdgeHubModuleName, "resource", "node", messagepkg.OperationProbe).
+		FillBody(string(output))
+
+	// 将基准测试结果发送到云端
+	err = eh.sendToCloud(*msg)
+	if err != nil {
+		klog.Errorf("failed to send probe result to CloudHub: %v", err)
+		return
+	}
+
+	klog.Info("Successfully sent probe result to CloudHub")
 }
 
 func (eh *EdgeHub) pubConnectInfo(isConnected bool) {
